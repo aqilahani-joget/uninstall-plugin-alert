@@ -9,13 +9,16 @@
             data: JSON.stringify({ selectedList: selectedList}),
             success: function (response) {
               var plugins = response.names || []; // already an array
-
-              // Build bullet list
               var bulletList = "";
-              for (var i = 0; i < plugins.length; i++) {
-                  bulletList += "• " + plugins[i] + "\n ";
+              if (plugins.length > 0) {
+                // Build bullet list
+                bulletList = "\n There are apps using this plugins(s):\n ";
+                for (var i = 0; i < plugins.length; i++) {
+                    bulletList += "• " + plugins[i] + "\n ";
+                }
               }
-              if (confirm('Are you sure you want to uninstall the selected Plugin(s)? \n There are apps using this plugins(s):\n ' + bulletList)) {
+              // console.log(decodeURIComponent(response.jars));
+              if (confirm('Are you sure you want to uninstall the selected Plugin(s)? ' + bulletList)) {
                   UI.blockUI(); 
                   var callback = {
                       success: function() {

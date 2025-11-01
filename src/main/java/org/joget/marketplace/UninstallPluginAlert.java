@@ -1,6 +1,7 @@
 package org.joget.marketplace;
 
 import java.util.Map;
+import java.util.StringTokenizer;
 import java.util.stream.Collectors;
 import java.io.IOException;
 import java.io.PrintWriter;
@@ -9,9 +10,14 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
+
+import org.joget.apps.app.model.AppDefinition;
 import org.joget.apps.app.model.UiHtmlInjectorPluginAbstract;
+import org.joget.apps.app.service.AppDevUtil;
 import org.joget.apps.app.service.AppUtil;
 import org.joget.commons.util.LogUtil;
 import org.joget.plugin.base.PluginManager;
@@ -26,7 +32,8 @@ import javax.sql.DataSource;
 import org.springframework.beans.BeansException;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import java.util.Iterator;
+import java.util.Set;
+import org.joget.apps.app.service.AppService;
 
 public class UninstallPluginAlert extends UiHtmlInjectorPluginAbstract implements PluginWebSupport {
        
@@ -70,16 +77,28 @@ public class UninstallPluginAlert extends UiHtmlInjectorPluginAbstract implement
         String body = request.getReader().lines().collect(Collectors.joining());
         JSONObject json = new JSONObject(body);
         JSONArray pluginClasses = json.getJSONArray("selectedList");
+        PluginManager pluginManager = (PluginManager) AppUtil.getApplicationContext().getBean("pluginManager");
         
-        List<Map<String, String>> apps = new ArrayList<>();
+        Set<Map<String, String>> apps = new HashSet<>();
+        Set<String> jarFiles = new HashSet<>();
         for (Object p: pluginClasses.toList()) {
-            LogUtil.info(getClassName(), "plugin class:" + p.toString());
-            apps = executeQery(p.toString(), apps);
-            LogUtil.info(getClassName(), apps.toString());
+            String jar = pluginManager.getJarFileName(p.toString());
+            if (jar != null) {
+                jarFiles.add(jar);
+            }
+            //LogUtil.info(getClassName(), "plugin class:" + p.toString());
+            //get apps that use the plugin class by querying in several tables
+            //apps = executeQery(p.toString(), apps);
+            //LogUtil.info(getClassName(), apps.toString());
         }
+        LogUtil.info(getClassName(), "Plugins stored in wflow/app_plugins are " + jarFiles.toString());
 
-        List<String> appIds = new ArrayList<String>();
-        List<String> appNames = new ArrayList<String>();
+        // get appid and appname from published apps that use the plugin jars (this is how uninstall jar logic works, minus the uninstalling part)
+        // note that even if there are jar files in app_src/<appid>/<app_id>_<app_version>/plugins, if it is unused it won't be detected here
+        apps = getPublishedApps(jarFiles);
+        
+        List<String> appIds = new ArrayList<>();
+        List<String> appNames = new ArrayList<>();
 
         for (Map<String, String> map : apps) {
             for (Map.Entry<String, String> entry : map.entrySet()) {
@@ -88,16 +107,78 @@ public class UninstallPluginAlert extends UiHtmlInjectorPluginAbstract implement
             }
         }
         
-        Map<String, Object> jsonOutput = new HashMap<String, Object>();
+        Map<String, Object> jsonOutput = new HashMap<>();
         jsonOutput.put("ids", appIds);
         jsonOutput.put("names", appNames);
+        jsonOutput.put("jars", jarFiles);
 
         PrintWriter out = response.getWriter();
         out.print(new ObjectMapper().writeValueAsString(jsonOutput)); // use Jackson for proper JSON
         out.flush();
     }
 
-    public List<Map<String, String>> executeQery(String pluginClass, List<Map<String, String>> apps) {
+    public Set<Map<String, String>> getPublishedApps(Set<String> jarFiles) {
+        Connection con = null;
+        PreparedStatement pstmt = null;
+        ResultSet rs = null;
+        Set<Map<String, String>> apps = new HashSet<>();
+        
+        String sql = getPublishedAppsSql();
+        try {
+            DataSource ds = (DataSource)AppUtil.getApplicationContext().getBean("setupDataSource");
+            con = ds.getConnection();
+
+            pstmt = con.prepareStatement(sql);
+            rs = pstmt.executeQuery();
+
+            while (rs.next()) {
+                // Get columns by name
+                String appId = rs.getString("appId");
+                String appName = rs.getString("name");
+                AppService appService = (AppService) AppUtil.getApplicationContext().getBean("appService");
+                AppDefinition appDef = appService.getAppDefinition(appId, rs.getString("appVersion"));
+                Collection<String> appPlugins = AppDevUtil.getPluginJarList(appDef);
+                LogUtil.info(getClassName(), appId + " plugins are " + appPlugins.toString());
+                // check for matches without looking at jar file versions
+                Set<String> matches = appPlugins.stream()
+                            .map(UninstallPluginAlert::normalizeJarName)
+                            .filter(jar -> jarFiles.stream()
+                            .map(UninstallPluginAlert::normalizeJarName)
+                            .anyMatch(jar::equals))
+                            .collect(Collectors.toSet());
+                // check for matches with exact same jar file versions
+                // Set<String> matches = appPlugins.stream()
+                //         .filter(jarFiles::contains)
+                //         .collect(Collectors.toSet());
+                Map<String, String> appIdName = new HashMap<>();
+                if (!matches.isEmpty()){
+                    appIdName.put(appId, appName);
+                    apps.add(appIdName);
+                }
+            }
+
+        } catch (SQLException | BeansException e) {
+            LogUtil.error(getClassName(), e, "");
+        } finally {
+            try {
+                if (rs != null) {
+                    rs.close();
+                }
+                if (pstmt != null) {
+                    pstmt.close();
+                }
+                if (con != null) {
+                    con.close();
+                }
+            } catch (SQLException e) {
+                LogUtil.error(getClassName(), e, "");
+            }
+        }
+        
+        return apps;
+    }
+
+    public Set<Map<String, String>> executeQery(String pluginClass, Set<Map<String, String>> apps) {
         Connection con = null;
         PreparedStatement pstmt = null;
         ResultSet rs = null;
@@ -129,13 +210,7 @@ public class UninstallPluginAlert extends UiHtmlInjectorPluginAbstract implement
                 String appName = rs.getString("name");
 
                 appIdName.put(appId, appName);
-
-                boolean exists = apps.stream()
-                             .anyMatch(map -> appName.equals(map.get(appId)));
-
-                if (!exists) {
-                    apps.add(appIdName);
-                }
+                apps.add(appIdName);
             }
 
         } catch (SQLException | BeansException e) {
@@ -151,7 +226,7 @@ public class UninstallPluginAlert extends UiHtmlInjectorPluginAbstract implement
                 if (con != null) {
                     con.close();
                 }
-            } catch (Exception e) {
+            } catch (SQLException e) {
                 LogUtil.error(getClassName(), e, "");
             }
         }
@@ -159,6 +234,11 @@ public class UninstallPluginAlert extends UiHtmlInjectorPluginAbstract implement
         return apps;
     }
 
+    private String getPublishedAppsSql() {
+        return "SELECT app.appId, app.name, app.appVersion " +
+                "FROM app_app app " +
+                "WHERE app.published = 1 ";
+    }
     private String getSql() {
         return "SELECT app.appId, app.name " +
                 "FROM app_app app " +
@@ -211,4 +291,18 @@ public class UninstallPluginAlert extends UiHtmlInjectorPluginAbstract implement
                 "    ) AS tmp " +  
                 ")";
     }
+
+    private static String normalizeJarName(String filename) {
+        if (filename == null) return "";
+        // Trim spaces
+        filename = filename.trim();
+        // Remove .jar extension
+        filename = filename.replaceAll("\\.jar$", "");
+        // Remove Windows copy suffix like " (1)", " (2)"
+        filename = filename.replaceAll("\\s*\\(\\d+\\)$", "");
+        // Remove version suffixes like -1.2.3, -v2.0.1, -SNAPSHOT, -beta
+        filename = filename.replaceAll("(-v?\\d+(\\.\\d+)*(-SNAPSHOT)?(-[a-zA-Z]+)?)$", "");
+        return filename;
+    }
+
 }
