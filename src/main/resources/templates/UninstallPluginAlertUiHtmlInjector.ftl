@@ -12,7 +12,7 @@
               var bulletList = "";
               if (plugins.length > 0) {
                 // Build bullet list
-                bulletList = "\n There are apps using this plugins(s):\n ";
+                bulletList = "\n There are apps using this plugin(s):\n ";
                 for (var i = 0; i < plugins.length; i++) {
                     bulletList += "• " + plugins[i] + "\n ";
                 }
