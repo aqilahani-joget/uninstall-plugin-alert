@@ -95,7 +95,7 @@ public class UninstallPluginAlert extends UiHtmlInjectorPluginAbstract implement
         }
         LogUtil.info(getClassName(), "Plugins stored in wflow/app_plugins are " + jarFiles.toString());
 
-        // get appid and appname from published apps that use the plugin jars (this is how uninstall jar logic works, minus the uninstalling part)
+        // get appid and appname from published apps that use the plugin jars (get list of jar files frommsame logic that export app uses)
         // note that if there are jar files in app_src/<appid>/<app_id>_<app_version>/plugins, even if it is unused it will be detected here
         apps = getPublishedApps(jarFiles);
         
