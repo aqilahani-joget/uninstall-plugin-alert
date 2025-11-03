@@ -19,7 +19,9 @@ import org.joget.apps.app.model.AppDefinition;
 import org.joget.apps.app.model.UiHtmlInjectorPluginAbstract;
 import org.joget.apps.app.service.AppDevUtil;
 import org.joget.apps.app.service.AppUtil;
+import org.joget.apps.app.service.DependenciesUtil;
 import org.joget.commons.util.LogUtil;
+import org.joget.commons.util.StringUtil;
 import org.joget.plugin.base.PluginManager;
 import org.joget.plugin.base.PluginWebSupport;
 import org.json.JSONArray;
@@ -84,7 +86,7 @@ public class UninstallPluginAlert extends UiHtmlInjectorPluginAbstract implement
         for (Object p: pluginClasses.toList()) {
             String jar = pluginManager.getJarFileName(p.toString());
             if (jar != null) {
-                jarFiles.add(jar);
+                jarFiles.add(StringUtil.unescapeString(jar, StringUtil.TYPE_URL));
             }
             //LogUtil.info(getClassName(), "plugin class:" + p.toString());
             //get apps that use the plugin class by querying in several tables
@@ -94,9 +96,12 @@ public class UninstallPluginAlert extends UiHtmlInjectorPluginAbstract implement
         LogUtil.info(getClassName(), "Plugins stored in wflow/app_plugins are " + jarFiles.toString());
 
         // get appid and appname from published apps that use the plugin jars (this is how uninstall jar logic works, minus the uninstalling part)
-        // note that even if there are jar files in app_src/<appid>/<app_id>_<app_version>/plugins, if it is unused it won't be detected here
+        // note that if there are jar files in app_src/<appid>/<app_id>_<app_version>/plugins, even if it is unused it will be detected here
         apps = getPublishedApps(jarFiles);
         
+        // another way for builders is to use this DependencyUtil
+        //JSONArray usages = DependenciesUtil.getDependencies(appId, version, type, keyword, request);
+
         List<String> appIds = new ArrayList<>();
         List<String> appNames = new ArrayList<>();
 
